@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" connectionConfig="{&quot;serverAliveInterval&quot;:300}" host="eva1.cs.purdue.edu" id="fbb8dff2-8889-4be2-ab3a-c7834cebccf9" port="22" customName="eva1.cs.purdue.edu" nameFormat="CUSTOM" username="lijiacheng" useOpenSSHConfig="true">
+        <option name="customName" value="eva1.cs.purdue.edu" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>
