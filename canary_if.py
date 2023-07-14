@@ -385,21 +385,33 @@ def generate_canary(shadow_models, args):
 def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models, args):
 
 	"""This function takes the generated canaries, detach the noise added and 
-	examine the effect by adding them into other random x. Return the top num_return 
-	of canaries where their noises have relatively less effect on selected random x
+	examine the effect by adding them into other random x, and it will calculate 
+	the loss difference between the original random x and the random x with noise.
+	The return value will be list of dictionary containing the x_id and it's 
+	corresponding list of loss difference.
 
     Arguments:
         canaries: list of canaries
 		x_id: the target image id list that macthes the canaries list
+		trainset: trainset
         num_compare: number of random x generated for comparision
-        num_return: the top num_return # of canaries will be return
         shawdow_models: the shawdow_models
+		args: args
 
     Returns:
-        selected canaries: list of tensor (selected canaries) """
+        list of dictionary
+		 
+	Examples:
+	 	for a input list of 5 canaries with id number 1-5, and each canary has 10 noises generated (meaning num_gen == 10)
+		return value will be:
+			{
+				"id": 1, "loss":[L1, L2, ... , L10]
+				"id": 2, "loss":[L1, L2, ... , L10]
+				......
+				"id": 3, "loss":[L1, L2, ... , L10]
+			}
+		 	 """
 
-	# TODO: the list of canaries has only one element, all the canaries are stacked in canaries[0]
-	# TODO: change the code 
 
 	# create a list to store the absolute change in loss when noises are added for each canary 
 	data = []
@@ -426,7 +438,7 @@ def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models,
 			indices = list(range(1,data_curr['id'])) + list(range(data_curr['id'] + 1, len(args.original_targetset.train_label)))
 			random_N_img = random.sample(indices, num_compare)
 
-			# create lists to store the totla loss (in_loss + out_loss) for the images with and without noise 
+			# create lists to store the total loss (in_loss + out_loss) for the images with and without noise 
 			ori_loss  = []
 			withnoise_loss = []
 			# create lists to store the loss's standard deviation for IN and OUT model with and without noise 
@@ -734,6 +746,8 @@ def main(args):
 	for i in vulnerable_datapoint_id:
 		selected_canaries.append(all_canaries[i])
 
+	
+	# set the number of random x for comparision
 	num_compare = 10
 	result = noise_test(canaries = selected_canaries, 
 	    x_id = vulnerable_datapoint_id, 
@@ -741,6 +755,7 @@ def main(args):
 		num_compare = num_compare , 
 		shadow_models = shadow_models, 
 		args = args)
+	#save the result
 	result = [{"id": r['id'], "loss": r['loss'] } for r in result]
 	np.savez(f'/home/915688516/code/canary_main/canary/loss_result.npy',np.array(result))
 		
