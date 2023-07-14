@@ -289,8 +289,8 @@ def generate_canary_one_shot(shadow_models, args, return_loss=False):
 					x.data = args.fixed_target_img.data + x_diff.data
 				else:
 					x.data = torch.max(torch.min(x, (1 - dm) / ds), -dm / ds)
-			if 1:
-			#if args.print_step:
+			#if 1:
+			if args.print_step:
 				print(f'step: {step}, ' + 'loss: %.3f, in_loss: %.3f, out_loss: %.3f, reg_loss: %.3f' % (loss, in_loss, out_loss, reg_norm))
 		
 		if args.stop_loss is not None and loss <= args.stop_loss:
@@ -731,25 +731,24 @@ def main(args):
 	# get the vulnerable datapoints, meaning they are relatively easy to attack
 	vulnerable_datapoint_id = (np.argwhere(some_stats['fix_final_preds'] >= threshold_low)).flatten()
 	selected_canaries = []
-	for i in vulnerable_datapoint_id[:5]:
+	for i in vulnerable_datapoint_id:
 		selected_canaries.append(all_canaries[i])
 
 	num_compare = 10
 	result = noise_test(canaries = selected_canaries, 
-	    x_id = vulnerable_datapoint_id[:5], 
+	    x_id = vulnerable_datapoint_id, 
 		trainset = trainset, 
 		num_compare = num_compare , 
 		shadow_models = shadow_models, 
 		args = args)
-	
 	result = [{"id": r['id'], "loss": r['loss'] } for r in result]
-	np.savez(f'/home/915688516/code/canary_main/canary/result/{args.name}/loss.npy',np.array(result))
+	np.savez(f'/home/915688516/code/canary_main/canary/loss_result.npy',np.array(result))
 		
 	
 	print(f"# of dict {len(result)}")
 	print(f"example of id output {result[0]['id']}")
 	print(f"length of loss {len(result[0]['loss'])}")
-	print(f"example of loss {result[0]['loss'][0]}")
+	print(f"example of loss {result[0]['loss']}")
 
 
 	'''

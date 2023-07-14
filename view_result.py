@@ -2,10 +2,11 @@ import numpy
 import matplotlib.pyplot as plt
 from utils import calibrate_logits,cal_results_jilin
 
-pred = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/jilin_net.npz')
+#pred = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/jilin_net.npz')
 #inf = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/inf_score.npy.npz')
-diff = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/diff.npy.npz')
+diff = numpy.load('/home/915688516/code/canary_main/canary/loss_result.npy.npz')
 
+'''
 # load out data 
 pred_logits = pred['pred_logits']
 in_out_labels = pred['in_out_labels']
@@ -13,17 +14,28 @@ canary_losses = pred['canary_losses']
 class_labels = pred['class_labels']
 img_id = pred['img_id']
 #all_canaries = pred['all_canaries']
+'''
 
-diff_list = []
+loss_diff_list = []
 id_list = []
-diff_list = [diff['arr_0'][i]['diff'] for i in range(len(diff['arr_0']))]
+loss_diff_list = [diff['arr_0'][i]['loss'] for i in range(len(diff['arr_0']))]
 id_list = [diff['arr_0'][i]['id'] for i in range(len(diff['arr_0']))]
 id_list = [str(id) for id in id_list]
 
-plt.hist(diff_list, bins=5)
-plt.title('Histogram of diff')
-plt.xlabel('Difference')
-plt.ylabel('Frequency')
+fig, axs = plt.subplots(2,2)
+
+# Plot the histograms on each subplot
+axs[0][0].hist(loss_diff_list[:200], bins='auto')
+axs[0][1].hist(loss_diff_list[200:400], bins='auto')
+axs[1][0].hist(loss_diff_list[400:600], bins='auto')
+axs[1][1].hist(loss_diff_list[600:], bins='auto')
+
+
+#print(f"len of loss list : {len(loss_diff_list)}")
+#plt.hist(loss_diff_list, bins=5)
+#plt.title('Histogram of diff')
+#plt.xlabel('Difference')
+#plt.ylabel('Frequency')
 plt.savefig('/home/915688516/code/canary_main/canary/diff.png')
 
 '''
