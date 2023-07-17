@@ -738,14 +738,14 @@ def calculate_loss(x, y, shadow_models, args):
 		in_loss /= in_models_counts
 	if out_models_counts != 0:
 		out_loss /= out_models_counts
-	
+	'''
 	# if in_loss and/or out_loss achieve the target logit before the 
 	# optimisation ends, zero them to avoid reverse optimisation
 	if (in_loss >= args.target_logits[0]):
 		in_loss = 0
 	if (out_loss <= args.target_logits[1]):
 		out_loss = 0
-
+	'''
 	if in_loss == 0 and out_loss == 0:
 		losses = torch.tensor([0.0], requires_grad=True).to(args.device)
 	else:

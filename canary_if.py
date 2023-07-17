@@ -230,7 +230,7 @@ def generate_canary_one_shot(shadow_models, args, return_loss=False):
 	args.out_criterion = get_attack_loss(args.out_model_loss)
 	
 	# initialize patch
-	x = initialize_poison(args) # canaries are initialise here, x is stacked so that len(x) == num_gen
+	x = initialize_poison(args) # canaries are initialise here, Xs are concatenated so that len(x) == num_gen
 	y = torch.tensor([target_img_class] * args.num_gen).to(args.device)
 	
 	dm = torch.tensor(args.data_mean)[None, :, None, None].to(args.device)
@@ -319,7 +319,19 @@ def generate_canary_one_shot(shadow_models, args, return_loss=False):
 	#	return x.detach(), loss.item(),inf_score
 	#else:
 	#	return x.detach(),inf_score
-	
+
+	'''
+	# select the noise
+	x = noise_test_single(
+		canaries=x,
+		num_compare=8,
+		num_select=3,
+		shadow_models=shadow_models,
+		args=args,
+		return_large=False
+	)
+	'''
+
 	if return_loss:
 		return x.detach(), loss.item()
 	else:
@@ -423,7 +435,6 @@ def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models,
 	# start the iteration for each input data point
 	for data_curr in data:
 
-
 		# get the target image with respect to the current canaries
 		target_img, _ = trainset[data_curr['id']]
 		target_img = target_img.unsqueeze(0).to(args.device)
@@ -475,7 +486,6 @@ def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models,
 					out_loss_curr = []
 					out_loss_noise_curr = []
 
-
 					# get the y_rnd ready to compute the losses
 					with torch.no_grad():
 						tmp_outputs = out_models[0](x_rnd)
@@ -485,7 +495,6 @@ def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models,
 					y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
 					y_out[:, target_class_rnd] += args.target_logits[1] 
 					y_out = y_out[:, target_class_rnd]
-
 
 					# calculate losses for IN models with and without noise
 					for curr_model in in_models:
@@ -557,6 +566,207 @@ def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models,
 
 	return data
 
+def noise_test_single(canaries , num_compare, num_select, shadow_models,  args, return_large = False):
+
+
+	"""This function takes the generated canaries, detach the noise added and 
+	examine the effect by adding them into other random x, and it will calculate 
+	the loss difference between the original random x and the random x with noise.
+	The return value will be a tensor with selected canaries where their noises possess 
+	a relatively small/large impact on other random X's loss  
+	
+
+    Arguments:
+        canaries: list of canaries
+        num_compare: number of random x generated for comparision
+		num_select: number of canaries will be selected among all the inputted canaries
+		return_large: if True, return canaries where their noises possess a relatively large impact on other random X's loss
+			if false, return the reverse (small impact)
+        shawdow_models: the shawdow_models
+		args: args
+
+    Returns:
+        selected canaries 
+		 
+	"""
+	
+	# initialise a list to store the loss difference with and without the noise for each canary
+	loss_diff = [{'index': 0, 'loss': 0} for _ in range(len(canaries))]
+
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+
+		# for each canary (noise) in canaries 
+		for i in range(len(canaries)):
+
+			# get the noise
+			noise = canaries[i].unsqueeze(0).to(args.device) - args.target_img
+
+			# get N # of random indices among the 50,000 labels, which do not include the canary class.
+			indices = list(range(1,args.target_img_id))+ list(range(args.target_img_id + 1, len(args.original_targetset.train_label)))
+			random_N_img = random.sample(indices, num_compare)
+
+			# create lists to store the total loss (in_loss + out_loss) for the images with and without noise 
+			ori_loss  = []
+			withnoise_loss = []
+			# create lists to store the loss's standard deviation for IN and OUT model with and without noise 
+			#ori_sd_in = []
+			#ori_sd_out = []
+			#withnoise_sd_in = []
+			#withnoise_sd_out = []
+
+			# Turn on inference context manager
+			with torch.inference_mode():
+				# for each random x
+				for id in random_N_img:
+
+					# get random image from the current id
+					x_rnd, target_class_rnd =  args.aug_trainset[id]
+					x_rnd = x_rnd.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+
+					# get x_rnd_noise by adding noise to x_rnd 
+					x_rnd_noise = x_rnd + noise
+					
+					# get IN and OUT model according to the chosen random image
+					in_models, out_models = split_shadow_models(shadow_models, target_img_id = id)
+					in_models = [models.eval() for models in in_models]
+					out_models = [models.eval() for models in out_models]
+					# initialise the IN and OUT loss for each iteration for one random image
+					in_loss_curr  = []
+					in_loss_noise_curr = []
+					out_loss_curr = []
+					out_loss_noise_curr = []
+
+					# get the y_rnd ready to compute the losses
+					y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+					y_rnd[:, target_class_rnd] += args.target_logits[0]
+					y_rnd = y_rnd[:, target_class_rnd]
+					y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+					y_out[:, target_class_rnd] += args.target_logits[1] 
+					y_out = y_out[:, target_class_rnd]
+
+					# calculate losses for IN models with and without noise
+					for curr_model in in_models:
+						outputs = curr_model(x_rnd)
+						outputs = outputs[:, target_class_rnd]
+						curr_loss = args.in_criterion(outputs, y_rnd)
+						in_loss_curr.append(curr_loss.item())
+
+						outputs_noise = curr_model(x_rnd_noise)
+						outputs_noise = outputs_noise[:, target_class_rnd]
+						curr_loss_noise = args.in_criterion(outputs_noise, y_rnd)
+						in_loss_noise_curr.append(curr_loss_noise.item())
+
+					# calculate losses for the OUT models with and without noise
+					for curr_model in out_models:
+						outputs = curr_model(x_rnd)
+						outputs = outputs[:, target_class_rnd]
+						curr_loss = args.out_criterion(outputs, y_out)
+						out_loss_curr.append(curr_loss.item()) 
+
+						outputs_noise = curr_model(x_rnd_noise)
+						outputs_noise = outputs_noise[:, target_class_rnd]
+						curr_loss_noise = args.out_criterion(outputs_noise, y_out)
+						out_loss_noise_curr.append(curr_loss_noise.item()) 
+
+					# average the IN and OUT losses and their sd
+					mean_in_loss = statistics.mean(in_loss_curr)
+					#sd_in_loss = statistics.stdev(in_loss_curr)
+
+					mean_out_loss = statistics.mean(out_loss_curr)
+					#sd_out_loss = statistics.stdev(out_loss_curr)
+
+					mean_in_loss_noise = statistics.mean(in_loss_noise_curr)
+					#sd_in_loss_noise = statistics.stdev(in_loss_noise_curr)
+
+					mean_out_loss_noise = statistics.mean(out_loss_noise_curr)
+					#sd_out_loss_noise = statistics.stdev(out_loss_noise_curr)
+					
+
+					# append all the original loss and sd
+					ori_loss.append(mean_in_loss + mean_out_loss)
+					withnoise_loss.append(mean_in_loss_noise + mean_out_loss_noise)
+					#ori_sd_in.append(sd_in_loss)
+					#ori_sd_out.append(sd_out_loss)
+					#withnoise_sd_in.append(sd_in_loss_noise)
+					#withnoise_sd_out.append(sd_out_loss_noise)
+
+				# average all the ori_diff and withnoise_diff and calculate their differece to get a single value diff_tmp for each canary
+				# note that abs() is used in this case since we wish to identify the noise with minimum effect on other random X
+				loss_diff[i]['loss'] = abs((sum(ori_loss) / len(ori_loss)) - (sum(withnoise_loss) / len(withnoise_loss)))
+
+	
+	selected_canaries = torch.empty(0).to(args.device)
+	# sort the list of dict according to the loss value in ascending order
+	loss_diff = sorted(loss_diff, key=lambda x: x['loss'], reverse=return_large)
+	for loss in loss_diff[:num_select]:
+		selected_canaries = torch.cat((selected_canaries, canaries[loss['index']].unsqueeze(0).to(args.device)))
+
+	# return the selected canaries 
+	return selected_canaries
+
+def cal_loss_each(canaries: list, x_id: list, shadow_models, trainset, args):
+
+	loss = [{'id': id, 'loss': []} for id in x_id]
+
+	# counter for recording the iteration index for the above list 
+	counter = 0
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+
+		# for each canary (noise) in canaries 
+		for canary_curr, id_curr in zip(canaries, x_id):
+
+			# extract the target class (the y value) that the canary_curr corresponds to 
+			_ , target_class =  trainset[id_curr]
+
+			for index in range(len(canary_curr)):
+
+				# extract the canary row by row
+				x = canary_curr[index]
+				x = x.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+				
+
+				# get IN and OUT model according to the chosen random image
+				in_models, out_models = split_shadow_models(shadow_models, target_img_id = id_curr)
+				in_models = [models.eval() for models in in_models]
+				out_models = [models.eval() for models in out_models]
+
+				# get the y_rnd ready to compute the losses
+				y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+				y_rnd[:, target_class] += args.target_logits[0]
+				y_rnd = y_rnd[:, target_class]
+				y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+				y_out[:, target_class] += args.target_logits[1] 
+				y_out = y_out[:, target_class]
+
+				in_loss = []
+				out_loss = []
+
+				# calculate losses for IN models with and without noise
+				for curr_model in in_models:
+					outputs = curr_model(x)
+					outputs = outputs[:, target_class]
+					curr_loss = args.in_criterion(outputs, y_rnd)
+					in_loss.append(curr_loss.item())
+
+				# calculate losses for the OUT models with and without noise
+				for curr_model in out_models:
+					outputs = curr_model(x)
+					outputs = outputs[:, target_class]
+					curr_loss = args.out_criterion(outputs, y_out)
+					out_loss.append(curr_loss.item())
+
+				# average the IN and OUT losses
+				mean_in_loss = statistics.mean(in_loss)
+				mean_out_loss = statistics.mean(out_loss)
+
+				loss[counter]['loss'].append(mean_in_loss + mean_out_loss)
+			
+			counter += 1
+	return loss
+				
+
 
 def main(args):
 
@@ -609,7 +819,8 @@ def main(args):
 	shadow_models = []
 	for i in range(args.num_shadow):
 		#checkpoint_name = args.checkpoint_prefix + f'_{i}.pth'
-		checkpoint_name = args.checkpoint_prefix + f'{i}_last.pth'
+		checkpoint_name = args.checkpoint_prefix + f'{i}_last_def.pth'
+		#checkpoint_name = args.checkpoint_prefix + f'{i}_last.pth'
 		#print (checkpoint_name)
 		curr_model = InferenceModel(i, args,checkpoint_name=checkpoint_name).to(args.device)
 		### create shadow model train loader
@@ -619,7 +830,9 @@ def main(args):
 		curr_model.train_loader = this_shadow_train_loader
 		shadow_models.append(curr_model)
 
-	checkpoint_name = args.checkpoint_prefix + f'{args.num_shadow}_last.pth'
+	# load the target model (the last model of the list)
+	checkpoint_name = args.checkpoint_prefix + f'{args.num_shadow}_last_def.pth'
+	#checkpoint_name = args.checkpoint_prefix + f'{args.num_shadow}_last.pth'
 	target_model = InferenceModel(-1, args,checkpoint_name=checkpoint_name).to(args.device)
 	curr_model_index = target_model.in_data
 	this_shadow_train_set =  part_pytorch_dataset(targetset.train_data[curr_model_index], targetset.train_label[curr_model_index], transform=transform_train,train=True)
@@ -705,11 +918,10 @@ def main(args):
 	#		 img_id=img_id)
 	#np.savez(f'saved_predictions/{args.name}/inf_score.npy',np.array(all_inf_score))
 
-	'''
 	os.makedirs(f'/home/915688516/code/canary_main/canary/result/{args.name}/', exist_ok=True)
 	np.savez(f'/home/915688516/code/canary_main/canary/result/{args.name}/{args.save_name}.npz', pred_logits=pred_logits, in_out_labels=in_out_labels, canary_losses=canary_losses, class_labels=class_labels,
-			 img_id=img_id, all_canaries = all_canaries)
-	np.savez(f'/home/915688516/code/canary_main/canary/result/{args.name}/inf_score.npy',np.array(all_inf_score))
+			 img_id=img_id)
+	#np.savez(f'/home/915688516/code/canary_main/canary/result/{args.name}/inf_score.npy',np.array(all_inf_score))
 	
 	### dummy calculatiton of auc and acc
 	### to be simplified
@@ -720,7 +932,6 @@ def main(args):
 	canary_losses = pred['canary_losses']
 	class_labels = pred['class_labels']
 	img_id = pred['img_id']
-	'''
 	
 	in_out_labels = np.swapaxes(in_out_labels, 0, 1).astype(bool)
 	pred_logits = np.swapaxes(pred_logits, 0, 1)
@@ -735,19 +946,32 @@ def main(args):
 	shadow_in_out_labels = in_out_labels[:-1]
 	target_in_out_labels = in_out_labels[-1:]
 
+	some_stats = cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=args.logits_mul)
+	print(some_stats)
 
-	# testing the how would the noise attached on canary affect other random X's loss separation
+
+	### stats function for extract vulerable data point
 	some_stats = cal_results_jilin(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=args.logits_mul)
 
+	### find the vulerable data point
 	threshold_low = some_stats['fix_threshold@0.001FPR'] 
-	# get the vulnerable datapoints, meaning they are relatively easy to attack
 	vulnerable_datapoint_id = (np.argwhere(some_stats['fix_final_preds'] >= threshold_low)).flatten()
 	selected_canaries = []
 	for i in vulnerable_datapoint_id:
 		selected_canaries.append(all_canaries[i])
 
-	
-	# set the number of random x for comparision
+	### for each vulnerable data point, calculate the loss for each canary (# of canaries in one data point == args.num_gen)
+	result = cal_loss_each(
+		canaries = selected_canaries,
+		x_id = vulnerable_datapoint_id,
+		shadow_models = shadow_models,
+		trainset = trainset,
+		args = args
+	)	
+	np.savez(f'/home/915688516/code/canary_main/canary/loss_each_canary.npy',np.array(result))
+
+	'''
+	# calculate stats for the canaries that is vulnerable 
 	num_compare = 10
 	result = noise_test(canaries = selected_canaries, 
 	    x_id = vulnerable_datapoint_id, 
@@ -757,19 +981,36 @@ def main(args):
 		args = args)
 	#save the result
 	result = [{"id": r['id'], "loss": r['loss'] } for r in result]
-	np.savez(f'/home/915688516/code/canary_main/canary/loss_result.npy',np.array(result))
-		
+	np.savez(f'/home/915688516/code/canary_main/canary/loss_result_2.npy',np.array(result))
+	'''
+
+	'''
+	# calculate stats for the canaries that is not vulnerable 
+	non_vulner_canaries = []
+	non_vulner_id = []
+	vulnerable_datapoint_id = vulnerable_datapoint_id.tolist()
+	for i, val in enumerate(all_canaries):
+		if i not in vulnerable_datapoint_id:
+			non_vulner_canaries.append(val)
+			non_vulner_id.append(i)
+	num_compare = 10
+	result = noise_test(canaries = non_vulner_canaries, 
+	    x_id = non_vulner_id, 
+		trainset = trainset, 
+		num_compare = num_compare , 
+		shadow_models = shadow_models, 
+		args = args)
+	#save the result
+	result = [{"id": r['id'], "loss": r['loss'] } for r in result]
+	np.savez(f'/home/915688516/code/canary_main/canary/loss_result_3.npy',np.array(result))
+	'''
+
 	
+	### show some stats from the result 
 	print(f"# of dict {len(result)}")
 	print(f"example of id output {result[0]['id']}")
 	print(f"length of loss {len(result[0]['loss'])}")
 	print(f"example of loss {result[0]['loss']}")
-
-
-	'''
-	some_stats = cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=args.logits_mul)
-	print(some_stats)
-	'''
 
 	# if usewandb:
 	#	wandb.log(some_stats)

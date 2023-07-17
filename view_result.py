@@ -4,7 +4,9 @@ from utils import calibrate_logits,cal_results_jilin
 
 #pred = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/jilin_net.npz')
 #inf = numpy.load('/home/915688516/code/canary_main/canary/result/jilin_net/inf_score.npy.npz')
-diff = numpy.load('/home/915688516/code/canary_main/canary/loss_result.npy.npz')
+#result = numpy.load('/home/915688516/code/canary_main/canary/loss_result.npy.npz') # vulnerable datapoint loss_diff result from non def model, --logit 40 0, --num 30 --iter 5000 --compare 10
+#result = numpy.load('/home/915688516/code/canary_main/canary/loss_result_2.npy.npz') # vulnerable datapoint loss_diff result from def model, --logit 10 0, --num 10 --iter 500 -- compare 10
+result = numpy.load('/home/915688516/code/canary_main/canary/loss_each_canary.npy.npz') # vulnerable datapoint loss result for each canary from def model, --logit 10 0, --num 10 --iter 500 -- compare 10
 
 '''
 # load out data 
@@ -15,27 +17,29 @@ class_labels = pred['class_labels']
 img_id = pred['img_id']
 #all_canaries = pred['all_canaries']
 '''
-
+'''
 loss_diff_list = []
 id_list = []
-loss_diff_list = [diff['arr_0'][i]['loss'] for i in range(len(diff['arr_0']))]
-id_list = [diff['arr_0'][i]['id'] for i in range(len(diff['arr_0']))]
-id_list = [str(id) for id in id_list]
-
-fig, axs = plt.subplots(2,2)
-
+loss_diff_list = [result['arr_0'][i]['loss'] for i in range(len(result['arr_0']))]
+id_list = [result['arr_0'][i]['id'] for i in range(len(result['arr_0']))]
+print(f"id : {id_list}")
+'''
+result_dict = result['arr_0']
+fig, axs = plt.subplots(2,3)
 # Plot the histograms on each subplot
-axs[0][0].hist(loss_diff_list[:200], bins='auto')
-axs[0][1].hist(loss_diff_list[200:400], bins='auto')
-axs[1][0].hist(loss_diff_list[400:600], bins='auto')
-axs[1][1].hist(loss_diff_list[600:], bins='auto')
+axs[0][0].hist(result_dict[0]['loss'], bins='auto')
+axs[0][1].hist(result_dict[1]['loss'], bins='auto')
+axs[0][2].hist(result_dict[2]['loss'], bins='auto')
+axs[1][0].hist(result_dict[3]['loss'], bins='auto')
+axs[1][1].hist(result_dict[4]['loss'], bins='auto')
+axs[1][2].hist(result_dict[5]['loss'], bins='auto')
 
 
 #print(f"len of loss list : {len(loss_diff_list)}")
 #plt.hist(loss_diff_list, bins=5)
-#plt.title('Histogram of diff')
-#plt.xlabel('Difference')
-#plt.ylabel('Frequency')
+plt.title('Histogram of diff')
+plt.xlabel('Difference')
+plt.ylabel('Frequency')
 plt.savefig('/home/915688516/code/canary_main/canary/diff.png')
 
 '''
