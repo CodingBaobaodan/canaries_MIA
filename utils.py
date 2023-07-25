@@ -283,10 +283,13 @@ def get_log_logits(pred_logits, class_labels):
 	pred_logits = copy.deepcopy(pred_logits)
 	
 	scores = []
+	# # of iteration == # of shadow model + 1
 	for pred_logits_i in pred_logits:
 		pred_logits_i = normalize_logits(pred_logits_i)
 		
+		# extract logit for true label, shape of y_true and y_wrong is (N,num_gen)
 		y_true = copy.deepcopy(pred_logits_i[np.arange(len(pred_logits_i)), :, class_labels])
+		# zero the logit for true label, and sum the logits on other labels
 		pred_logits_i[np.arange(len(pred_logits_i)), :, class_labels] = 0
 		y_wrong = np.sum(pred_logits_i, axis=2)
 		score = (np.log(y_true + 1e-45) - np.log(y_wrong + 1e-45))
@@ -317,22 +320,52 @@ def calibrate_logits(pred_logits, class_labels, logits_strategy):
 '''
 
 
-def lira_online(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, fix_variance=False):
+def lira_online(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, in_weights, out_weights, fix_variance=False):
 	dat_in = []
 	dat_out = []
 	
+	# extract the IN and OUT caliberated score 
 	for j in range(shadow_scores.shape[1]):
 		dat_in.append(shadow_scores[shadow_in_out_labels[:, j], j, :])
 		dat_out.append(shadow_scores[~shadow_in_out_labels[:, j], j, :])
 	
+	
+	# apply the len function to each sequence in the list (dat_in and dat_out).
 	in_size = min(map(len, dat_in))
 	out_size = min(map(len, dat_out))
-	
+	# shrink the dat_in and dat_out into the same size 
 	dat_in = np.array([x[:in_size] for x in dat_in])
 	dat_out = np.array([x[:out_size] for x in dat_out])
+
+	print(f"shape of in weight: {in_weights.shape}")
+	print(f"example of in weight: {in_weights[0]}")
+
+
+	print(f"before in example {dat_in[0][0][5]}")
+
+	counter = 0
+	for d_in, in_weight in zip(dat_in,in_weights):
+		for d in d_in:
+			dat_in[counter] = d * in_weight
+		counter += 1
+	counter = 0
+	for d_out, out_weight in zip(dat_out,out_weights):
+		for d in d_out:
+			dat_out[counter] = d * out_weight
+		counter += 1
+			
+
+		
+	print(f"after in {dat_in[0][0][5]}")
+
 	
-	mean_in = np.median(dat_in, 1)
-	mean_out = np.median(dat_out, 1)
+	# median is calculated along the second axis
+	mean_in = np.mean(dat_in, 1)
+	mean_out = np.mean(dat_out, 1)
+	#mean_in = np.median(dat_in, 1)
+	#mean_out = np.median(dat_out, 1)
+
+	print(f"mean shape: {mean_in.shape}")
 	
 	if fix_variance:
 		std_in = np.std(dat_in)
@@ -344,6 +377,8 @@ def lira_online(shadow_scores, shadow_in_out_labels, target_scores, target_in_ou
 	final_preds = []
 	true_labels = []
 	
+	# compute the log-likelihood of observing a value sc from a normal distribution 
+	# with mean mean_in and standard deviation std_in + 1e-30.
 	for ans, sc in zip(target_in_out_labels, target_scores):
 		pr_in = -scipy.stats.norm.logpdf(sc, mean_in, std_in + 1e-30)
 		pr_out = -scipy.stats.norm.logpdf(sc, mean_out, std_out + 1e-30)
@@ -408,7 +443,7 @@ def cal_stats(final_preds, true_labels):
 	return fpr, tpr, auc, acc, low, thresholds_low
 
 
-def cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=1, logits_strategy=None):
+def cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, in_weight=None, out_weight=None, logits_mul=1,  logits_strategy=None):
 	some_stats = {}
 	
 	# final_preds indicates the confidence level of whether the target X* is a member or non-member for the target model.
@@ -416,7 +451,7 @@ def cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_ou
 	# final_preds also correspond to the threshold point
 	# true_labels indicates the whether X* is member or non-member in the target model
 	final_preds, true_labels = lira_online(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels,
-										   fix_variance=True)
+										   in_weight, out_weight, fix_variance=True)
 
 	fpr, tpr, auc, acc, low, thresholds_low = cal_stats(logits_mul * final_preds, true_labels)
 	some_stats['fix_auc'] = auc

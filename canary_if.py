@@ -225,6 +225,32 @@ def calculate_influence_loss(x,y,shadow_models,args):
 def generate_canary_one_shot(shadow_models, args, return_loss=False):
 	target_img_class = args.target_img_class
 	
+	
+	
+	'''
+	### observe the prob 
+	in_models, out_models = split_shadow_models(shadow_models, args.target_img_id)
+	occurrence_in = []
+	occurrence_out = []
+	for id in id_list:
+		count = 0
+		for curr_in in in_models:
+			if id in curr_in.in_data:
+				count += 1
+		occurrence_in.append(count)
+		count = 0
+		for curr_out in out_models:
+			if id not in curr_out.in_data:
+				count += 1
+		occurrence_out.append(count)
+
+	prob = [(i/len(in_models)) * (j/len(out_models)) for i, j in zip(occurrence_in,occurrence_out)]	
+	print(f"mean value: {statistics.mean(prob)}")
+	#output = zip(id_list,prob)
+	#print(f"len in {len(in_models)} len out {len(out_models)}")
+	#print(tuple(output))
+	'''
+
 	# get loss functions
 	args.in_criterion = get_attack_loss(args.in_model_loss)
 	args.out_criterion = get_attack_loss(args.out_model_loss)
@@ -332,10 +358,32 @@ def generate_canary_one_shot(shadow_models, args, return_loss=False):
 	)
 	'''
 
+	'''
+	similarity_test(
+		canaries=x,
+		shadow_models=shadow_models,
+		num_compare=10,
+		args=args
+	)
+	'''
+
+	'''
+	cal_loss_each(canaries=x, shadow_models=shadow_models,args=args, plot_graph=True)
+	'''
+
+	'''
+	L2_test(canaries=x, shadow_models=shadow_models,args=args)
+	'''
+
+	'''
+	x = select_noise(canaries=x,num_select=10,shadow_models=shadow_models,args=args)
+	'''
+	in_weight, out_weight = cal_weight(canaries=x,shadow_models=shadow_models,args=args)
+
 	if return_loss:
-		return x.detach(), loss.item()
+		return x.detach(), loss.item(), in_weight, out_weight
 	else:
-		return x.detach()
+		return x.detach(), in_weight, out_weight
 	
 
 def generate_canary(shadow_models, args):
@@ -376,23 +424,23 @@ def generate_canary(shadow_models, args):
 					args.out_target_class = out_target_class
 				
 				#x, loss,inf_score = generate_canary_one_shot(shadow_models, args, return_loss=True)
-				x, loss = generate_canary_one_shot(shadow_models, args, return_loss=True)
+				x, loss, in_weight, out_weight = generate_canary_one_shot(shadow_models, args, return_loss=True)
 				# canaries is the Xmal (X with added noise)
 				canaries.append(x)
 
 				#all_inf_score.append(inf_score)
 				args.canary_losses[-1].append(loss)
 			
-			#if (len(canaries) >= args.num_aug):
-			#	break
-			if sum([len(canary) for canary in canaries]) >= args.num_aug:  ### wrong code? (always generate one canary)?
+			#if sum([len(canary) for canary in canaries]) >= 10:  
+				#break
+			if sum([len(canary) for canary in canaries]) >= args.num_aug:  
 				break
 	else:
 		x, loss = generate_canary_one_shot(shadow_models, args, return_loss=True)
 		canaries.append(x)
 		args.canary_losses[-1].append(loss)
 	
-	return canaries,all_inf_score
+	return canaries,all_inf_score, in_weight, out_weight
 
 def noise_test(canaries: list, x_id: list, trainset, num_compare, shadow_models, args):
 
@@ -705,7 +753,11 @@ def noise_test_single(canaries , num_compare, num_select, shadow_models,  args, 
 	# return the selected canaries 
 	return selected_canaries
 
-def cal_loss_each(canaries: list, x_id: list, shadow_models, trainset, args):
+def cal_vulnerable_loss_each(canaries: list, x_id: list, shadow_models, trainset, args):
+
+	'''
+	calculate the loss for the generated (optimised) X specifically for the vulnerable datapoint
+	'''
 
 	loss = [{'id': id, 'loss': []} for id in x_id]
 
@@ -717,7 +769,7 @@ def cal_loss_each(canaries: list, x_id: list, shadow_models, trainset, args):
 		# for each canary (noise) in canaries 
 		for canary_curr, id_curr in zip(canaries, x_id):
 
-			# extract the target class (the y value) that the canary_curr corresponds to 
+			# extract the target class that the canary_curr corresponds to 
 			_ , target_class =  trainset[id_curr]
 
 			for index in range(len(canary_curr)):
@@ -765,8 +817,318 @@ def cal_loss_each(canaries: list, x_id: list, shadow_models, trainset, args):
 			
 			counter += 1
 	return loss
-				
 
+def cal_loss_each(canaries, shadow_models, args, plot_graph = False):
+
+	'''
+	calculate the loss for the generated (optimised) X for each target X
+	'''
+
+	loss = []
+
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+
+		# for each generated Xmal, note that len(canaries) == num_gen
+		for index in range(len(canaries)):
+
+			# extract the canary row by row
+			x = canaries[index]
+			x = x.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+			
+			# get IN and OUT model according to the chosen random image
+			in_models, out_models = split_shadow_models(shadow_models, target_img_id = args.target_img_id)
+			in_models = [models.eval() for models in in_models]
+			out_models = [models.eval() for models in out_models]
+
+			# get the y_rnd ready to compute the losses
+			y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+			y_rnd[:, args.target_img_class] += args.target_logits[0]
+			y_rnd = y_rnd[:, args.target_img_class]
+			y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+			y_out[:, args.target_img_class] += args.target_logits[1] 
+			y_out = y_out[:, args.target_img_class]
+
+			in_loss = []
+			out_loss = []
+
+			# calculate losses for IN models with and without noise
+			for curr_model in in_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				curr_loss = args.in_criterion(outputs, y_rnd)
+				in_loss.append(curr_loss.item())
+
+			# calculate losses for the OUT models with and without noise
+			for curr_model in out_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				curr_loss = args.out_criterion(outputs, y_out)
+				out_loss.append(curr_loss.item())
+
+			# average the IN and OUT losses
+			mean_in_loss = statistics.mean(in_loss)
+			mean_out_loss = statistics.mean(out_loss)
+
+			loss.append(mean_in_loss + mean_out_loss)
+		
+		if plot_graph:
+			plt.hist(np.array(loss), bins='auto')
+			plt.xlabel('loss')
+			plt.ylabel('Frequency')
+			plt.savefig(f'/home/915688516/code/canary_main/loss_each_canary/{args.target_img_id}')
+			plt.close()
+
+def similarity_test(canaries, num_compare, shadow_models, args):
+
+	# get the image id which belongs to the target x's class 
+	id_list = []
+	counter = 0
+	for _, img_class in args.aug_trainset:
+		if counter == args.target_img_id:
+			counter += 1
+			continue
+		if img_class == args.target_img_class:
+			id_list.append(counter)
+		counter += 1
+	
+	# get IN and OUT model according to the chosen random image
+	in_models, out_models = split_shadow_models(shadow_models, target_img_id = args.target_img_id)
+	in_models = [models.eval() for models in in_models]
+	out_models = [models.eval() for models in out_models]
+
+	# get the model where the id is in the model, namely get all the IN model for each id 
+	seleced_out_models_id = {id: [] for id in id_list} 
+	for id in id_list:
+		for curr_out in out_models:
+			if id in curr_out.in_data:
+				seleced_out_models_id[id].append(curr_out)
+
+
+	# get the y_rnd ready to compute the losses
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+	y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+	y_rnd[:, args.target_img_class] += args.target_logits[0]
+	y_rnd = y_rnd[:, args.target_img_class]
+	y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+	y_out[:, args.target_img_class] += args.target_logits[1] 
+	y_out = y_out[:, args.target_img_class]
+
+
+	
+	# Turn on inference context manager
+	with torch.inference_mode():
+		# for each canary (noise) in canaries 
+		for i in range(len(canaries)):
+		
+			# get the Xmal row by row
+			canary = canaries[i].unsqueeze(0).to(args.device)
+
+			# calculate prediction logit for X in the OUT models
+			canary_logit_selected_out  = 0
+			for curr_model in out_models:
+				outputs = curr_model(canary)
+				outputs = outputs[:, args.target_img_class]
+				canary_logit_selected_out += outputs
+			canary_logit_selected_out = canary_logit_selected_out / len(out_models)
+
+			# store the result for canary_logit_selected_out - x_sim_logit
+			diff = []
+
+			# for each id 
+			for id in id_list:
+
+				# get image from the current id, x_sim stands for similar as x_sim and canary belongs to the same image class
+				x_sim, _ =  args.aug_trainset[id]
+				x_sim = x_sim.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+
+				# calculate the IN Model prediction logit for x_sim
+				x_sim_logit  = 0
+				for curr_model in seleced_out_models_id[id]:
+					outputs = curr_model(x_sim)
+					outputs = outputs[:, args.target_img_class]
+					x_sim_logit += outputs
+				x_sim_logit = x_sim_logit / len(seleced_out_models_id[id])
+				
+				diff.append(x_sim_logit - canary_logit_selected_out)
+
+			diff = [val.cpu() for val in diff]
+			plt.hist(np.array(diff), bins='auto')
+			plt.title('Histogram of similarity')
+			plt.xlabel('Difference')
+			plt.ylabel('Frequency')
+			os.makedirs(f'/home/915688516/code/canary_main/canary/similarity_test_pic/{args.target_img_id}/', exist_ok=True)
+			plt.savefig(f'/home/915688516/code/canary_main/canary/similarity_test_pic/{args.target_img_id}/{i}')
+			plt.close()
+
+def L2_test(canaries, shadow_models,args):
+
+	'''
+	calculate the L2 distance between target X and X_sim, and Xmal and X_sim, where
+	X_sim is defined as the data points that belong to the same class as target X
+	'''
+
+	ori_dist_diff= []
+	withnoise_dist_diff = []
+
+	# get the image id and tensor which belongs to the target x's class 
+	id_list = []
+	counter = 0
+	for _, img_class in args.aug_trainset:
+		if counter == args.target_img_id:
+			counter += 1
+			continue
+		if img_class == args.target_img_class:
+			id_list.append(counter)
+		counter += 1
+	x_sim = []
+	for id in id_list:
+		x_tmp, _ = args.aug_trainset[id]
+		x_sim.append(x_tmp.to(args.device))
+	
+	# calculate original L2 distance between target X and X similar (x_sim simply belongs to the same class as target X)
+	target_x, _ = args.aug_trainset[args.target_img_id]
+	target_x = target_x.to(args.device)
+	for x_curr in x_sim:
+		ori_dist_diff.append(torch.dist(x_curr, target_x, p=2))
+	
+	for i in range(len(canaries)):
+		
+		# get the Xmal row by row
+		canary = canaries[i].to(args.device)
+
+		for x_curr in x_sim:
+			withnoise_dist_diff.append(torch.dist(x_curr, canary, p=2))
+		
+		#diff = [before - after for before, after in zip(ori_dist_diff,withnoise_dist_diff)]
+
+		fig, axs = plt.subplots(1,2)
+		# Plot the histograms on each subplot
+		axs[0].hist(np.array([x.cpu().detach() for x in withnoise_dist_diff]), bins='auto')
+		axs[1].hist(np.array([x.cpu().detach() for x in ori_dist_diff]), bins='auto')
+		plt.title('L2 distance')
+		plt.xlabel('L2 distance')
+		plt.ylabel('Frequency')
+		os.makedirs(f'/home/915688516/code/canary_main/L2_test/{args.target_img_id}/', exist_ok=True)
+		plt.savefig(f'/home/915688516/code/canary_main/L2_test/{args.target_img_id}/{i}')
+		plt.close()
+	
+def select_noise(canaries, num_select, shadow_models, args):
+	
+	loss = [{'loss' : [], 'canary': torch.empty(0).to(args.device)} for i in range(len(canaries))]
+
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+
+		# for each generated Xmal, note that len(canaries) == num_gen
+		for index in range(len(canaries)):
+
+			# extract the canary row by row
+			x = canaries[index]
+			x = x.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+			loss[index]['canary'] = x
+			
+			# get IN and OUT model according to the chosen random image
+			in_models, out_models = split_shadow_models(shadow_models, target_img_id = args.target_img_id)
+			in_models = [models.eval() for models in in_models]
+			out_models = [models.eval() for models in out_models]
+
+			# get the y_rnd ready to compute the losses
+			y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+			y_rnd[:, args.target_img_class] += args.target_logits[0]
+			y_rnd = y_rnd[:, args.target_img_class]
+			y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+			y_out[:, args.target_img_class] += args.target_logits[1] 
+			y_out = y_out[:, args.target_img_class]
+
+			in_loss = []
+			out_loss = []
+
+			# calculate losses for IN models with and without noise
+			for curr_model in in_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				curr_loss = args.in_criterion(outputs, y_rnd)
+				in_loss.append(curr_loss.item())
+
+			# calculate losses for the OUT models with and without noise
+			for curr_model in out_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				curr_loss = args.out_criterion(outputs, y_out)
+				out_loss.append(curr_loss.item())
+
+			# average the IN and OUT losses
+			mean_in_loss = statistics.mean(in_loss)
+			mean_out_loss = statistics.mean(out_loss)
+
+			loss[index]['loss'] = (mean_in_loss + mean_out_loss)
+
+	selected_canaries = torch.empty(0).to(args.device)
+	# sort the list of dict according to the loss value in ascending order
+	loss = sorted(loss, key=lambda x: x['loss'])
+	for l in loss[:num_select]:
+		selected_canaries = torch.cat((selected_canaries, l['canary']))
+	return selected_canaries
+
+def cal_weight(canaries, shadow_models, args):
+
+	# get IN and OUT model according to the chosen random image
+	in_models, out_models = split_shadow_models(shadow_models, target_img_id = args.target_img_id)
+	in_models = [models.eval() for models in in_models]
+	out_models = [models.eval() for models in out_models]
+
+	with torch.no_grad():
+		tmp_outputs = args.target_model(torch.rand(1,3,32,32).to(args.device))
+		# get the y_rnd ready to compute the losses
+		y_rnd = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+		y_rnd[:, args.target_img_class] += args.target_logits[0]
+		y_rnd = y_rnd[:, args.target_img_class]
+		y_out = torch.zeros(tmp_outputs.shape, device=args.device, dtype=tmp_outputs.dtype)
+		y_out[:, args.target_img_class] += args.target_logits[1] 
+		y_out = y_out[:, args.target_img_class]
+
+		in_weight = []
+		out_weight = []
+
+		# for each generated Xmal, note that len(canaries) == num_gen
+		for index in range(len(canaries)):
+
+			# extract the canary row by row
+			x = canaries[index]
+			x = x.unsqueeze(0).to(args.device) # turn into torch.size([1,3,32,32])
+
+			in_pre = []
+			out_pre = []
+
+			# calculate losses for IN models with and without noise
+			for curr_model in in_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				in_pre.append(outputs.item())
+
+			# calculate losses for the OUT models with and without noise
+			for curr_model in out_models:
+				outputs = curr_model(x)
+				outputs = outputs[:, args.target_img_class]
+				out_pre.append(outputs.item())
+
+			in_weight.append(statistics.stdev(in_pre))
+			out_weight.append(statistics.stdev(out_pre))
+		
+		# inversely scale the weight according to it's magnitude and normalise 
+		in_weight = [1.0 / i for i in in_weight]
+		in_weight = [((i / sum(in_weight)) * args.num_gen) for i in in_weight]
+		out_weight = [1.0 / i for i in out_weight]
+		out_weight = [((i / sum(out_weight)) * args.num_gen) for i in out_weight]
+
+	return in_weight, out_weight
+
+
+
+
+			
 
 def main(args):
 
@@ -852,13 +1214,14 @@ def main(args):
 	args.img_id = []  # N
 	all_inf_score = []
 	all_canaries = []
+	in_weights = []
+	out_weights = []
 	
 	for i in range(args.start, args.end):
 		args.target_img_id = i
 		
-		args.target_img, args.target_img_class = trainset[args.target_img_id] # args.target_img_class is a int value
+		args.target_img, args.target_img_class = trainset[args.target_img_id] # args.target_img_class is a single tensor value
 		args.target_img = args.target_img.unsqueeze(0).to(args.device) # change from shape [3,32,32] to [1,3,32,32]
-
 		
 		args.in_out_labels.append([])
 		args.canary_losses.append([])
@@ -882,8 +1245,11 @@ def main(args):
 		if args.aug_strategy and 'baseline' in args.aug_strategy:
 			curr_canaries = generate_aug_imgs(args)
 		else:
-			curr_canaries,all_inf_score_temp = generate_canary(train_shadow_models, args)
+			curr_canaries,all_inf_score_temp, in_weights_tmp, out_weights_tmp = generate_canary(train_shadow_models, args)
 		
+		
+		in_weights.append(in_weights_tmp)
+		out_weights.append(out_weights_tmp)
 
 		# append all the influence score for each iteration
 		all_inf_score.append(all_inf_score_temp)
@@ -934,22 +1300,24 @@ def main(args):
 	img_id = pred['img_id']
 	
 	in_out_labels = np.swapaxes(in_out_labels, 0, 1).astype(bool)
-	pred_logits = np.swapaxes(pred_logits, 0, 1)
+	pred_logits = np.swapaxes(pred_logits, 0, 1) # now the shape become: (# of shadow models + 1, N, num_gen, # of classes)
 	
 	# calibrate_logits() calculates the scores based on the model prediction on each classes 
 	# shape of scores array is: (# of shadow models + 1, N, num_gen)
 	scores = calibrate_logits(pred_logits, class_labels, args.logits_strategy)
 	
+	in_weights = np.array(in_weights)
+	out_weights = np.array(out_weights)
 	
 	shadow_scores = scores[:-1]
 	target_scores = scores[-1:]
 	shadow_in_out_labels = in_out_labels[:-1]
 	target_in_out_labels = in_out_labels[-1:]
 
-	some_stats = cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=args.logits_mul)
+	some_stats = cal_results(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, in_weights, out_weights, logits_mul=args.logits_mul)
 	print(some_stats)
 
-
+	'''
 	### stats function for extract vulerable data point
 	some_stats = cal_results_jilin(shadow_scores, shadow_in_out_labels, target_scores, target_in_out_labels, logits_mul=args.logits_mul)
 
@@ -959,7 +1327,11 @@ def main(args):
 	selected_canaries = []
 	for i in vulnerable_datapoint_id:
 		selected_canaries.append(all_canaries[i])
+	'''
 
+
+
+	'''
 	### for each vulnerable data point, calculate the loss for each canary (# of canaries in one data point == args.num_gen)
 	result = cal_loss_each(
 		canaries = selected_canaries,
@@ -968,7 +1340,8 @@ def main(args):
 		trainset = trainset,
 		args = args
 	)	
-	np.savez(f'/home/915688516/code/canary_main/canary/loss_each_canary.npy',np.array(result))
+	'''
+	#np.savez(f'/home/915688516/code/canary_main/canary/loss_each_canary.npy',np.array(result))
 
 	'''
 	# calculate stats for the canaries that is vulnerable 
@@ -1005,7 +1378,7 @@ def main(args):
 	np.savez(f'/home/915688516/code/canary_main/canary/loss_result_3.npy',np.array(result))
 	'''
 
-	
+	'''
 	### show some stats from the result 
 	print(f"# of dict {len(result)}")
 	print(f"example of id output {result[0]['id']}")
@@ -1017,7 +1390,7 @@ def main(args):
 	
 	#if not args.save_preds:
 	#	os.remove(f'saved_predictions/{args.name}/{args.save_name}.npz')
-
+	'''
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Gen Canary')

@@ -25,6 +25,8 @@ id_list = [result['arr_0'][i]['id'] for i in range(len(result['arr_0']))]
 print(f"id : {id_list}")
 '''
 result_dict = result['arr_0']
+print(f" vulnerable datapoint: {[id['id'] for id in result_dict]}")
+'''
 fig, axs = plt.subplots(2,3)
 # Plot the histograms on each subplot
 axs[0][0].hist(result_dict[0]['loss'], bins='auto')
@@ -41,6 +43,7 @@ plt.title('Histogram of diff')
 plt.xlabel('Difference')
 plt.ylabel('Frequency')
 plt.savefig('/home/915688516/code/canary_main/canary/diff.png')
+'''
 
 '''
 # the diff stores a list of dictionary containing id and it's corresponding diff value 

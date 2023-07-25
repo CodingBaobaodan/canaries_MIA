@@ -11,7 +11,7 @@
 ### Jilin's args
 
 #  cifar100 args                                                                                                                                          
-CUDA_VISIBLE_DEVICES=2 python3 canary_if.py --select_top_num 10 --num_classes 100 --dataset cifar100 --checkpoint_prefix /home/915688516/code/saved_models/ --name jilin_net --save_name jilin_net --net jilin_net --num_shadow 69 --iter 30 --stochastic_k 2 --lr 0.05 --weight_decay 0.001 --init target_img --opt adamw --in_model_loss target_logits --out_model_loss target_logits --target_logits 10 0 --aug_strategy try_random_out_class --num_gen 30 --num_aug 30 --start 0 --end 100
+CUDA_VISIBLE_DEVICES=3 python3 canary_if.py --select_top_num 10 --num_classes 100 --dataset cifar100 --checkpoint_prefix /home/915688516/code/saved_models/ --name jilin_net --save_name jilin_net --net jilin_net --num_shadow 69 --iter 30 --stochastic_k 2 --lr 0.05 --weight_decay 0.001 --init target_img --opt adamw --in_model_loss target_logits --out_model_loss target_logits --target_logits 10 0 --aug_strategy try_random_out_class --num_gen 50 --num_aug 50 --start 0 --end 5
 
 
 ### Parameters explain"
